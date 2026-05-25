@@ -1,4 +1,29 @@
+# Local dev compose — builds the image locally and runs the full stack.
+# The submission branch uses a stripped-down version that pulls from GHCR.
+#
+# The `index-init` service copies /opt/index.bin (baked into the image layer)
+# into a named volume that both API replicas mount read-only. This guarantees
+# both APIs mmap the *same* inode → the kernel keeps a single page-cache copy
+# regardless of overlayfs behaviour.
+
 services:
+  index-init:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: rinha-vini-api:latest
+    container_name: rinha-index-init
+    entrypoint: ["/bin/sh","-c"]
+    command: ["if [ ! -s /data/index.bin ]; then cp /opt/index.bin /data/index.bin; fi"]
+    volumes:
+      - index_data:/data
+    networks: [rinha]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: "30MB"
+
   lb:
     image: haproxy:2.9-alpine
     container_name: rinha-lb
@@ -17,28 +42,30 @@ services:
           memory: "20MB"
 
   api-1: &api
-    build:
-      context: .
-      dockerfile: api/Dockerfile
     image: rinha-vini-api:latest
     container_name: rinha-api-1
     environment:
-      API_ID: "1"
       LISTEN_ADDR: "0.0.0.0:8080"
+      INDEX_PATH: "/data/index.bin"
+    volumes:
+      - index_data:/data:ro
+    depends_on:
+      index-init:
+        condition: service_completed_successfully
     networks: [rinha]
     deploy:
       resources:
         limits:
-          cpus: "0.475"
-          memory: "165MB"
+          cpus: "0.45"
+          memory: "150MB"
 
   api-2:
     <<: *api
     container_name: rinha-api-2
-    environment:
-      API_ID: "2"
-      LISTEN_ADDR: "0.0.0.0:8080"
 
 networks:
   rinha:
     driver: bridge
+
+volumes:
+  index_data:
