@@ -71,10 +71,38 @@ impl Index {
         }
         std::hint::black_box(sum);
 
-        Ok(Index {
+        let idx = Index {
             n, d, n_cells, nprobe,
             _mmap: mmap, centroids, cell_offset, vectors_f32, labels,
-        })
+        };
+
+        // Self-warm: run synthetic queries that exercise the KNN code path on
+        // every cell. Without this, the Rinha k6 ramp pays cold-cache cost on
+        // the first ~1000 requests and the p99 tail explodes (we observed
+        // 405ms → 212ms locally just by ab-warming before k6).
+        let n_warm = std::env::var("WARMUP_QUERIES")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(2000usize);
+        idx.self_warm(n_warm);
+        eprintln!("[index] self-warm: {} queries done", n_warm);
+
+        Ok(idx)
+    }
+
+    fn self_warm(&self, n_queries: usize) {
+        let mut q = Query::default();
+        let mut state: u32 = 0xDEADBEEFu32;
+        for _ in 0..n_queries {
+            for k in 0..D {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                let f = ((state >> 8) & 0xFFFFFF) as f32 / 16_777_216.0;
+                q.v[k] = if k == 5 || k == 6 {
+                    if (state & 1) == 0 { -1.0 } else { f }
+                } else {
+                    f
+                };
+            }
+            std::hint::black_box(self.knn5_count_frauds(&q));
+        }
     }
 
     /// Pad the query to 16 floats (same layout as references).
