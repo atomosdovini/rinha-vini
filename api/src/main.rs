@@ -45,6 +45,8 @@ async fn main() -> std::io::Result<()> {
 async fn handle_conn(mut sock: TcpStream, idx: Arc<Index>) -> std::io::Result<()> {
     let mut buf = vec![0u8; READ_BUF];
     let mut len = 0usize;
+    // Single response scratch buffer reused for every request on this conn.
+    let mut resp_buf: Vec<u8> = Vec::with_capacity(160);
     loop {
         // 1) Read until we have request headers.
         let headers_end = loop {
@@ -88,7 +90,7 @@ async fn handle_conn(mut sock: TcpStream, idx: Arc<Index>) -> std::io::Result<()
         }
 
         // 4) Route + write response.
-        let mut resp_buf: Vec<u8> = Vec::with_capacity(128);
+        resp_buf.clear();
         match route {
             Route::Ready => {
                 resp_buf.extend_from_slice(
@@ -128,37 +130,23 @@ fn score_request(body: &[u8], idx: &Index) -> (bool, f32) {
 }
 
 fn render_response(out: &mut Vec<u8>, approved: bool, score: f32, keep_alive: bool) {
+    // Fully pre-rendered responses with Content-Length baked in (35 bytes body).
+    // Each candidate response has identical body length (35), so the headers are
+    // constant — one giant static byte string per (approved, score, keep_alive).
+    // 12 variants in total: 6 score buckets × 2 keep_alive states.
+    const KA: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: keep-alive\r\n\r\n";
+    const CL: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n";
     let body: &'static [u8] = match (approved, (score * 5.0).round() as i32) {
-        (true, 0) => b"{\"approved\":true,\"fraud_score\":0.0}",
-        (true, 1) => b"{\"approved\":true,\"fraud_score\":0.2}",
-        (true, 2) => b"{\"approved\":true,\"fraud_score\":0.4}",
+        (true, 0) => b"{\"approved\":true ,\"fraud_score\":0.0}",
+        (true, 1) => b"{\"approved\":true ,\"fraud_score\":0.2}",
+        (true, 2) => b"{\"approved\":true ,\"fraud_score\":0.4}",
         (false, 3) => b"{\"approved\":false,\"fraud_score\":0.6}",
         (false, 4) => b"{\"approved\":false,\"fraud_score\":0.8}",
         (false, 5) => b"{\"approved\":false,\"fraud_score\":1.0}",
-        _ => b"{\"approved\":true,\"fraud_score\":0.0}",
+        _ => b"{\"approved\":true ,\"fraud_score\":0.0}",
     };
-    let conn: &[u8] = if keep_alive { b"keep-alive" } else { b"close" };
-    out.extend_from_slice(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ");
-    let len_buf = itoa_u32(body.len() as u32);
-    out.extend_from_slice(&len_buf);
-    out.extend_from_slice(b"\r\nConnection: ");
-    out.extend_from_slice(conn);
-    out.extend_from_slice(b"\r\n\r\n");
+    out.extend_from_slice(if keep_alive { KA } else { CL });
     out.extend_from_slice(body);
-}
-
-fn itoa_u32(mut n: u32) -> Vec<u8> {
-    if n == 0 {
-        return vec![b'0'];
-    }
-    let mut tmp = [0u8; 10];
-    let mut i = tmp.len();
-    while n > 0 {
-        i -= 1;
-        tmp[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-    }
-    tmp[i..].to_vec()
 }
 
 fn find_double_crlf(buf: &[u8]) -> Option<usize> {
