@@ -1,0 +1,7 @@
+target/
+**/target/
+*.tmp
+.DS_Store
+# Reference data is fetched at build time from the official repo; do not commit.
+resources/references.json.gz
+/tmp/

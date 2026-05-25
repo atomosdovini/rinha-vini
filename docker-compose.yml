@@ -1,0 +1,44 @@
+services:
+  lb:
+    image: haproxy:2.9-alpine
+    container_name: rinha-lb
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./lb/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - api-1
+      - api-2
+    networks: [rinha]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "20MB"
+
+  api-1: &api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: rinha-vini-api:latest
+    container_name: rinha-api-1
+    environment:
+      API_ID: "1"
+      LISTEN_ADDR: "0.0.0.0:8080"
+    networks: [rinha]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "165MB"
+
+  api-2:
+    <<: *api
+    container_name: rinha-api-2
+    environment:
+      API_ID: "2"
+      LISTEN_ADDR: "0.0.0.0:8080"
+
+networks:
+  rinha:
+    driver: bridge

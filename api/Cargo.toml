@@ -1,0 +1,20 @@
+[package]
+name = "rinha-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rinha-api"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+# Minimal: no framework. Hand-rolled TCP loop with std + tokio for v1.
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "time", "signal"] }
+memmap2 = "0.9"
