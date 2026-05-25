@@ -1,7 +1,29 @@
 # Submission docker-compose for Rinha de Backend 2026.
-# Pulls the prebuilt image from GHCR — no source or build context required.
+# Pulls the prebuilt image from GHCR — no source / build context needed.
+#
+# Topology:
+#   index-init    one-shot: copies /opt/index.bin (baked into image) → /data
+#   lb            haproxy 2.9 round-robin on :9999
+#   api-1, api-2  Rust API replicas, mmap /data/index.bin (single page cache)
+#
+# Resource sum: 0.05 + 0.05 + 0.45 + 0.45 = 1.00 CPU
+#               30 + 20 + 150 + 150 = 350 MB
 
 services:
+  index-init:
+    image: ghcr.io/atomosdovini/rinha-vini-api:latest
+    container_name: rinha-index-init
+    entrypoint: ["/bin/sh","-c"]
+    command: ["if [ ! -s /data/index.bin ]; then cp /opt/index.bin /data/index.bin; fi"]
+    volumes:
+      - index_data:/data
+    networks: [rinha]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: "30MB"
+
   lb:
     image: haproxy:2.9-alpine
     container_name: rinha-lb
@@ -24,12 +46,18 @@ services:
     container_name: rinha-api-1
     environment:
       LISTEN_ADDR: "0.0.0.0:8080"
+      INDEX_PATH: "/data/index.bin"
+    volumes:
+      - index_data:/data:ro
+    depends_on:
+      index-init:
+        condition: service_completed_successfully
     networks: [rinha]
     deploy:
       resources:
         limits:
-          cpus: "0.475"
-          memory: "165MB"
+          cpus: "0.45"
+          memory: "150MB"
 
   api-2:
     <<: *api
@@ -38,3 +66,6 @@ services:
 networks:
   rinha:
     driver: bridge
+
+volumes:
+  index_data:
