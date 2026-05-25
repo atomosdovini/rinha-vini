@@ -32,7 +32,7 @@ const MAGIC: &[u8; 8] = b"RINHAV03";
 const N_CELLS: usize = 1024;
 const KMEANS_ITERS: usize = 12;
 const KMEANS_SAMPLE: usize = 200_000;
-const DEFAULT_NPROBE: u64 = 24;
+const DEFAULT_NPROBE: u64 = 8;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();

@@ -135,24 +135,25 @@ impl Index {
 }
 
 // Both `a` and `b` point to 16 contiguous floats; the last 2 are 0 (padding).
+// Runtime dispatch — the cfg-gated path was being excluded when RUSTFLAGS did
+// not propagate to the cfg layer, leaving us with a scalar build silently.
 #[inline(always)]
 unsafe fn l2sq_f32_16(a: *const f32, b: *const f32) -> f32 {
-    #[cfg(target_feature = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     {
-        return l2sq_f32_16_avx2(a, b);
-    }
-    #[cfg(not(target_feature = "avx2"))]
-    {
-        let mut acc = 0f32;
-        for k in 0..D {
-            let d = *a.add(k) - *b.add(k);
-            acc += d * d;
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            return l2sq_f32_16_avx2(a, b);
         }
-        acc
     }
+    let mut acc = 0f32;
+    for k in 0..D {
+        let d = *a.add(k) - *b.add(k);
+        acc += d * d;
+    }
+    acc
 }
 
-#[cfg(target_feature = "avx2")]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn l2sq_f32_16_avx2(a: *const f32, b: *const f32) -> f32 {
