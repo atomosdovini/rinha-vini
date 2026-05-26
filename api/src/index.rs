@@ -115,27 +115,33 @@ impl Index {
     pub fn knn5_count_frauds(&self, q: &Query) -> u32 {
         let qpad = Self::pad_query(q);
 
-        // 1. Distance to each centroid in f32, pick nprobe nearest via partial sort.
-        let nprobe = self.nprobe;
-        let mut cell_d: Vec<(f32, u32)> = Vec::with_capacity(self.n_cells);
+        // 1. Distance to each centroid (f32), pick nprobe nearest via partial sort.
+        //    Stack-allocated buffer — no heap alloc on the hot path.
+        const MAX_CELLS: usize = 4096;
+        let n_cells = self.n_cells.min(MAX_CELLS);
+        let mut cell_d: [(f32, u32); MAX_CELLS] = [(f32::INFINITY, 0u32); MAX_CELLS];
         unsafe {
-            for c in 0..self.n_cells {
+            for c in 0..n_cells {
                 let base = self.centroids.add(c * D);
                 let mut acc = 0f32;
                 for k in 0..D {
                     let diff = *base.add(k) - q.v[k];
                     acc += diff * diff;
                 }
-                cell_d.push((acc, c as u32));
+                cell_d[c] = (acc, c as u32);
             }
         }
-        let np = nprobe.min(self.n_cells);
-        cell_d.select_nth_unstable_by(np - 1, |a, b|
+        let np = self.nprobe.min(n_cells);
+        cell_d[..n_cells].select_nth_unstable_by(np - 1, |a, b|
             a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // 2. Top-5 over chosen cells, f32 L2².
+        //    Hoisted max_d / max_idx: only re-scan the 5 slots when we actually
+        //    insert (which happens at most ~5 times per query in steady state).
         let mut dists = [f32::INFINITY; 5];
         let mut labs = [0u8; 5];
+        let mut max_d = f32::INFINITY;
+        let mut max_idx = 0usize;
 
         unsafe {
             let co = self.cell_offset;
@@ -146,13 +152,15 @@ impl Index {
                 for i in start..end {
                     let base = self.vectors_f32.add(i * VEC_STRIDE);
                     let d2 = l2sq_f32_16(base, qpad.as_ptr());
-                    let mut worst = 0usize;
-                    for k in 1..5 {
-                        if dists[k] > dists[worst] { worst = k; }
-                    }
-                    if d2 < dists[worst] {
-                        dists[worst] = d2;
-                        labs[worst] = *self.labels.add(i);
+                    if d2 < max_d {
+                        dists[max_idx] = d2;
+                        labs[max_idx] = *self.labels.add(i);
+                        // Recompute max — runs O(slot fills) total, ~5 times per query.
+                        max_d = dists[0]; max_idx = 0;
+                        if dists[1] > max_d { max_d = dists[1]; max_idx = 1; }
+                        if dists[2] > max_d { max_d = dists[2]; max_idx = 2; }
+                        if dists[3] > max_d { max_d = dists[3]; max_idx = 3; }
+                        if dists[4] > max_d { max_d = dists[4]; max_idx = 4; }
                     }
                 }
             }
