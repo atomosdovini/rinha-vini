@@ -14,7 +14,8 @@ services:
     image: rinha-vini-api:latest
     container_name: rinha-index-init
     entrypoint: ["/bin/sh","-c"]
-    command: ["if [ ! -s /data/index.bin ]; then cp /opt/index.bin /data/index.bin; fi"]
+    # dd with a small buffer to keep memory bounded; idempotent.
+    command: ["if [ ! -s /data/index.bin ]; then dd if=/opt/index.bin of=/data/index.bin bs=1M conv=fsync status=none; fi"]
     volumes:
       - index_data:/data
     networks: [rinha]
@@ -22,7 +23,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "30MB"
+          memory: "60MB"
 
   lb:
     image: haproxy:2.9-alpine
@@ -39,7 +40,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "20MB"
+          memory: "10MB"
 
   api-1: &api
     image: rinha-vini-api:latest
@@ -47,6 +48,7 @@ services:
     environment:
       LISTEN_ADDR: "0.0.0.0:8080"
       INDEX_PATH: "/data/index.bin"
+      WORKERS: "1"
     volumes:
       - index_data:/data:ro
     depends_on:
@@ -57,7 +59,7 @@ services:
       resources:
         limits:
           cpus: "0.45"
-          memory: "150MB"
+          memory: "140MB"
 
   api-2:
     <<: *api

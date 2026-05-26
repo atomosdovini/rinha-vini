@@ -18,8 +18,18 @@ use index::Index;
 
 const READ_BUF: usize = 4096;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> std::io::Result<()> {
+fn main() -> std::io::Result<()> {
+    let workers = std::env::var("WORKERS")
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(2usize);
+    if workers <= 1 {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all().build()?.block_on(run());
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers).enable_all().build()?.block_on(run())
+}
+
+async fn run() -> std::io::Result<()> {
     let addr: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".into())
         .parse()

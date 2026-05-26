@@ -16,5 +16,5 @@ strip = true
 
 [dependencies]
 # Minimal: no framework. Hand-rolled TCP loop with std + tokio for v1.
-tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "time", "signal"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "time", "signal"] }
 memmap2 = "0.9"
