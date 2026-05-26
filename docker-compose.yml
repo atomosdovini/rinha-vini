@@ -1,20 +1,18 @@
-# Submission docker-compose for Rinha de Backend 2026.
-# Pulls the prebuilt image from GHCR — no source / build context needed.
+# Local dev compose — builds the image locally and runs the full stack.
+# The submission branch uses a stripped-down version that pulls from GHCR.
 #
-# Topology:
-#   index-init    one-shot: copies /opt/index.bin (baked into image) → /data
-#   lb            haproxy 2.9 round-robin on :9999
-#   api-1, api-2  Rust API replicas, mmap /data/index.bin (single page cache)
-#
-# Resource sum: 0.05 + 0.05 + 0.45 + 0.45 = 1.00 CPU
-#               30 + 20 + 150 + 150 = 350 MB
+# The `index-init` service copies /opt/index.bin (baked into the image layer)
+# into a named volume that both API replicas mount read-only. This guarantees
+# both APIs mmap the *same* inode → the kernel keeps a single page-cache copy
+# regardless of overlayfs behaviour.
 
 services:
   index-init:
     image: ghcr.io/atomosdovini/rinha-vini-api:latest
     container_name: rinha-index-init
     entrypoint: ["/bin/sh","-c"]
-    command: ["if [ ! -s /data/index.bin ]; then cp /opt/index.bin /data/index.bin; fi"]
+    # dd with a small buffer to keep memory bounded; idempotent.
+    command: ["if [ ! -s /data/index.bin ]; then dd if=/opt/index.bin of=/data/index.bin bs=1M conv=fsync status=none; fi"]
     volumes:
       - index_data:/data
     networks: [rinha]
@@ -22,7 +20,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "30MB"
+          memory: "60MB"
 
   lb:
     image: haproxy:2.9-alpine
@@ -39,7 +37,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "20MB"
+          memory: "10MB"
 
   api-1: &api
     image: ghcr.io/atomosdovini/rinha-vini-api:latest
@@ -47,6 +45,7 @@ services:
     environment:
       LISTEN_ADDR: "0.0.0.0:8080"
       INDEX_PATH: "/data/index.bin"
+      WORKERS: "1"
     volumes:
       - index_data:/data:ro
     depends_on:
@@ -57,7 +56,7 @@ services:
       resources:
         limits:
           cpus: "0.45"
-          memory: "150MB"
+          memory: "140MB"
 
   api-2:
     <<: *api
